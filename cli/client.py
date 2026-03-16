@@ -11,6 +11,8 @@ def load_config():
     config = {
         'TAIGA_URL': 'https://taiga.linkedtrust.us',
         'TAIGA_TOKEN': None,
+        'TAG_TEAM': 'cook',
+        'TAG_CASH': 'usd',
     }
 
     # Read conf file
@@ -95,41 +97,53 @@ def get_status_id(project, status_name):
     raise SystemExit(f"Status '{status_name}' not found. Available: {available}")
 
 
-def build_tags(existing_tags, cook=None, cash=None, extra_tags=None):
-    """Build tag list, replacing any existing cook/cash tags."""
+def get_tag_labels():
+    """Return (team_label, cash_label) from config."""
+    config = load_config()
+    return config['TAG_TEAM'], config['TAG_CASH']
+
+
+def build_tags(existing_tags, team=None, cash=None, extra_tags=None):
+    """Build tag list, replacing any existing team/cash tags."""
+    team_label, cash_label = get_tag_labels()
+    team_re = re.compile(rf'\d+\s*{re.escape(team_label)}', re.I)
+    cash_re = re.compile(rf'\d+\s*{re.escape(cash_label)}', re.I)
+
     tags = []
     if existing_tags:
         for t in existing_tags:
-            # existing_tags from API can be [name, color] pairs or strings
             tag_name = t[0] if isinstance(t, (list, tuple)) else t
-            # Strip old cook/cash tags if we're replacing
-            if cook is not None and re.match(r'\d+\s*cook', tag_name, re.I):
+            if team is not None and team_re.match(tag_name):
                 continue
-            if cash is not None and re.match(r'\d+\s*usd', tag_name, re.I):
+            if cash is not None and cash_re.match(tag_name):
                 continue
             tags.append(tag_name)
 
-    if cook is not None and cook > 0:
-        tags.append(f'{cook}cook')
+    if team is not None and team > 0:
+        tags.append(f'{team}{team_label}')
     if cash is not None and cash > 0:
-        tags.append(f'{cash}usd')
+        tags.append(f'{cash}{cash_label}')
     if extra_tags:
         tags.extend(extra_tags)
     return tags
 
 
 def parse_earnings(tags):
-    """Parse cook and cash amounts from a tag list. Returns (cook, cash)."""
-    cook = 0
-    cash = 0
+    """Parse team and cash amounts from a tag list. Returns (team, cash)."""
+    team_label, cash_label = get_tag_labels()
+    team_re = re.compile(rf'(\d+)\s*{re.escape(team_label)}', re.I)
+    cash_re = re.compile(rf'(\d+)\s*{re.escape(cash_label)}', re.I)
+
+    team_total = 0
+    cash_total = 0
     if not tags:
-        return cook, cash
+        return team_total, cash_total
     for t in tags:
         tag_name = t[0] if isinstance(t, (list, tuple)) else t
-        m = re.search(r'(\d+)\s*cook', tag_name, re.I)
+        m = team_re.search(tag_name)
         if m:
-            cook += int(m.group(1))
-        m = re.search(r'(\d+)\s*usd', tag_name, re.I)
+            team_total += int(m.group(1))
+        m = cash_re.search(tag_name)
         if m:
-            cash += int(m.group(1))
-    return cook, cash
+            cash_total += int(m.group(1))
+    return team_total, cash_total

@@ -32,8 +32,16 @@ TAIGA_TOKEN=<bearer-token>
 ```
 Env vars `TAIGA_URL` and `TAIGA_TOKEN` override the conf file.
 
-## Tag conventions
+## Tag conventions (configurable)
 
-- `Ncook` — cook tokens earned (e.g. `50cook`)
-- `Nusd` — cash payment in USD (e.g. `100usd`)
-- Tags are on user stories, parsed by `earnings` command
+CLI uses `--team` and `--cash` flags. What tag string they produce is configurable:
+
+```
+# In ~/.mcp-taiga.conf (defaults shown)
+TAG_TEAM=cook       # --team 50 → "50cook" tag
+TAG_CASH=usd        # --cash 100 → "100usd" tag
+```
+
+Another org could set `TAG_TEAM=points` and `TAG_CASH=dollars` — same CLI, different tags.
+
+Tags are on user stories, parsed by the `earnings` command using the same labels.

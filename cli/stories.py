@@ -2,7 +2,7 @@
 
 import os
 import click
-from .client import get_api, get_project, resolve_user, get_status_id, build_tags, parse_earnings
+from .client import get_api, get_project, resolve_user, get_status_id, build_tags, parse_earnings, get_tag_labels
 from .formatters import table, as_json
 
 
@@ -88,12 +88,13 @@ def list_cmd(project, status, assign, tag, use_json):
         for s in stories:
             status_name = s.status_extra_info.get('name', '') if hasattr(s, 'status_extra_info') else ''
             tags_str = ', '.join(_tag_names(s.tags))
-            cook, cash = parse_earnings(s.tags)
+            team_label, cash_label = get_tag_labels()
+            team_val, cash_val = parse_earnings(s.tags)
             value = []
-            if cook:
-                value.append(f'{cook}cook')
-            if cash:
-                value.append(f'${cash}')
+            if team_val:
+                value.append(f'{team_val}{team_label}')
+            if cash_val:
+                value.append(f'${cash_val}')
             rows.append((s.ref, s.subject[:60], status_name, value and ' '.join(value) or '', tags_str))
         table(['#', 'Subject', 'Status', 'Value', 'Tags'], rows)
 
@@ -109,16 +110,17 @@ def show_cmd(project, ref):
 
     assignee = _assignee_name(api, story) if story.assigned_to else 'unassigned'
     status_name = story.status_extra_info.get('name', '') if hasattr(story, 'status_extra_info') else ''
-    cook, cash = parse_earnings(story.tags)
+    team_label, cash_label = get_tag_labels()
+    team_val, cash_val = parse_earnings(story.tags)
 
     print(f"#{story.ref}  {story.subject}")
     print(f"Status: {status_name}  |  Assigned: {assignee}")
-    if cook or cash:
+    if team_val or cash_val:
         parts = []
-        if cook:
-            parts.append(f'{cook} COOK')
-        if cash:
-            parts.append(f'${cash} USD')
+        if team_val:
+            parts.append(f'{team_val} {team_label.upper()}')
+        if cash_val:
+            parts.append(f'${cash_val} {cash_label.upper()}')
         print(f"Value: {' + '.join(parts)}")
     if story.tags:
         print(f"Tags: {', '.join(_tag_names(story.tags))}")
@@ -138,11 +140,11 @@ def show_cmd(project, ref):
 @click.argument('subject')
 @click.option('--description', '-d', default='', help='Description text')
 @click.option('--assign', '-a', help='Assign to username')
-@click.option('--cook', type=int, help='COOK amount (adds tag)')
-@click.option('--cash', type=int, help='Cash/USD amount (adds tag)')
+@click.option('--team', type=int, help='Team token amount (adds tag)')
+@click.option('--cash', type=int, help='Cash amount (adds tag)')
 @click.option('--tag', '-t', multiple=True, help='Additional tags')
 @click.option('--status', '-s', help='Status name')
-def create_cmd(project, subject, description, assign, cook, cash, tag, status):
+def create_cmd(project, subject, description, assign, team, cash, tag, status):
     """Create a user story."""
     api = get_api()
     proj = get_project(api, project)
@@ -152,7 +154,7 @@ def create_cmd(project, subject, description, assign, cook, cash, tag, status):
         'description': description,
     }
 
-    tags = build_tags([], cook=cook, cash=cash, extra_tags=list(tag))
+    tags = build_tags([], team=team, cash=cash, extra_tags=list(tag))
     if tags:
         kwargs['tags'] = tags
 
@@ -174,11 +176,11 @@ def create_cmd(project, subject, description, assign, cook, cash, tag, status):
 @click.option('--subject', help='New subject')
 @click.option('--description', '-d', help='New description')
 @click.option('--assign', '-a', help='Assign to username')
-@click.option('--cook', type=int, help='Set COOK amount')
-@click.option('--cash', type=int, help='Set cash/USD amount')
+@click.option('--team', type=int, help='Set team token amount')
+@click.option('--cash', type=int, help='Set cash amount')
 @click.option('--tag', '-t', multiple=True, help='Add tags')
 @click.option('--status', '-s', help='Set status')
-def update_cmd(project, ref, subject, description, assign, cook, cash, tag, status):
+def update_cmd(project, ref, subject, description, assign, team, cash, tag, status):
     """Update a user story."""
     api = get_api()
     proj = get_project(api, project)
@@ -193,8 +195,8 @@ def update_cmd(project, ref, subject, description, assign, cook, cash, tag, stat
     if status:
         story.status = get_status_id(proj, status)
 
-    if cook is not None or cash is not None or tag:
-        story.tags = build_tags(story.tags, cook=cook, cash=cash, extra_tags=list(tag))
+    if team is not None or cash is not None or tag:
+        story.tags = build_tags(story.tags, team=team, cash=cash, extra_tags=list(tag))
 
     story.update()
     print(f"Updated #{story.ref}: {story.subject}")
