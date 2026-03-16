@@ -15,7 +15,8 @@
 #   mcp-taiga comment <project> <ref> "text"
 #   mcp-taiga attach <project> <ref> <file-or-url>
 
-MCP_TAIGA_DIR="$(cd "$(dirname "$0")" && pwd)"
+SELF="$(readlink -f "$0")"
+MCP_TAIGA_DIR="$(cd "$(dirname "$SELF")" && pwd)"
 PYTHON="$MCP_TAIGA_DIR/.venv/bin/python"
 
 if [ ! -f "$PYTHON" ]; then
@@ -24,4 +25,5 @@ if [ ! -f "$PYTHON" ]; then
     exit 1
 fi
 
+cd "$MCP_TAIGA_DIR"
 exec "$PYTHON" -m cli.main "$@"

@@ -37,8 +37,7 @@ def get_api():
     if not config['TAIGA_TOKEN']:
         raise SystemExit(
             "No TAIGA_TOKEN configured.\n"
-            "Set it in ~/.mcp-taiga.conf or as env var.\n"
-            "Get your token from Taiga > Settings > Application Tokens."
+            "Run: mcp-taiga login"
         )
     api = TaigaAPI(host=config['TAIGA_URL'])
     api.token = config['TAIGA_TOKEN']

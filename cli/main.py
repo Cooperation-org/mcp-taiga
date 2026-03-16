@@ -6,6 +6,7 @@ from .stories import (
     create_cmd, update_cmd, move_cmd, comment_cmd, attach_cmd,
 )
 from .earnings import earnings_cmd
+from .auth import login_cmd
 
 
 @click.group()
@@ -25,6 +26,7 @@ cli.add_command(move_cmd)
 cli.add_command(comment_cmd)
 cli.add_command(attach_cmd)
 cli.add_command(earnings_cmd)
+cli.add_command(login_cmd)
 
 
 if __name__ == '__main__':
