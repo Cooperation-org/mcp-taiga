@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# mcp-taiga — manage Taiga tasks with cook/cash tags
+#
+# Read:
+#   mcp-taiga projects                        List all projects
+#   mcp-taiga members <project>               List project members
+#   mcp-taiga list <project> [--status X]     List stories
+#   mcp-taiga show <project> <ref>            Show story detail
+#   mcp-taiga earnings <project>              Sum cook/cash per user
+#
+# Write:
+#   mcp-taiga create <project> "subject" [--cook N] [--cash N] [--assign X]
+#   mcp-taiga update <project> <ref> [--cook N] [--cash N]
+#   mcp-taiga move <project> <ref> <status>
+#   mcp-taiga comment <project> <ref> "text"
+#   mcp-taiga attach <project> <ref> <file-or-url>
+
+MCP_TAIGA_DIR="$(cd "$(dirname "$0")" && pwd)"
+PYTHON="$MCP_TAIGA_DIR/.venv/bin/python"
+
+if [ ! -f "$PYTHON" ]; then
+    echo "Error: venv not found at $MCP_TAIGA_DIR/.venv" >&2
+    echo "Run: cd $MCP_TAIGA_DIR && ./setup.sh" >&2
+    exit 1
+fi
+
+exec "$PYTHON" -m cli.main "$@"
