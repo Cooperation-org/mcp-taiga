@@ -12,6 +12,8 @@ def load_config():
     config = {
         'TAIGA_URL': 'https://taiga.linkedtrust.us',
         'TAIGA_TOKEN': None,
+        'TAIGA_USERNAME': None,
+        'TAIGA_PASSWORD': None,
         'TAG_TEAM': 'cook',
         'TAG_CASH': 'usd',
         'DEFAULT_PROJECT': None,
@@ -47,14 +49,94 @@ def get_default_project():
     return proj
 
 
+def _jwt_expired(token, skew=60):
+    """True if a JWT access token is expired (or expires within `skew` seconds).
+
+    Non-JWT or undecodable tokens are treated as NOT expired (best-effort use).
+    """
+    import base64
+    import json
+    import time
+    try:
+        payload = token.split('.')[1]
+        payload += '=' * (-len(payload) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload))
+    except Exception:
+        return False
+    exp = claims.get('exp')
+    if not exp:
+        return False
+    return time.time() >= (exp - skew)
+
+
+def login_for_token(host, username, password):
+    """Authenticate username/password against Taiga and return an access token."""
+    import requests
+    resp = requests.post(
+        f'{host}/api/v1/auth',
+        json={'type': 'normal', 'username': username, 'password': password},
+        timeout=15,
+    )
+    if not resp.ok:
+        raise SystemExit(
+            f"Taiga login failed for '{username}' ({resp.status_code}). "
+            f"Check TAIGA_USERNAME/TAIGA_PASSWORD."
+        )
+    return resp.json()['auth_token']
+
+
+def _cache_token(token):
+    """Persist a freshly-minted token back to ~/.mcp-taiga.conf when that file
+    exists, so subsequent invocations reuse it until it expires. Env-only
+    credential setups (no conf file) simply re-login each run."""
+    conf_path = Path.home() / '.mcp-taiga.conf'
+    if not conf_path.exists():
+        return
+    try:
+        lines = conf_path.read_text().splitlines()
+        out, found = [], False
+        for line in lines:
+            if line.strip().startswith('TAIGA_TOKEN='):
+                out.append(f'TAIGA_TOKEN={token}')
+                found = True
+            else:
+                out.append(line)
+        if not found:
+            out.append(f'TAIGA_TOKEN={token}')
+        conf_path.write_text('\n'.join(out) + '\n')
+    except Exception:
+        pass  # caching is best-effort; never block a working token
+
+
+def resolve_token(config):
+    """Return a usable Taiga token, refreshing via username/password when the
+    stored token is missing or expired. Keeps token-only setups working."""
+    token = config.get('TAIGA_TOKEN')
+    username = config.get('TAIGA_USERNAME')
+    password = config.get('TAIGA_PASSWORD')
+
+    if token and not _jwt_expired(token):
+        return token
+
+    if username and password:
+        fresh = login_for_token(config['TAIGA_URL'], username, password)
+        _cache_token(fresh)
+        return fresh
+
+    if token:
+        return token  # expired but no creds to refresh; let the API try anyway
+
+    raise SystemExit(
+        "No Taiga credentials configured.\n"
+        "Run: mcp-taiga login, or set TAIGA_USERNAME and TAIGA_PASSWORD."
+    )
+
+
 def get_api():
     """Return authenticated TaigaAPI instance."""
     config = load_config()
-    if not config['TAIGA_TOKEN']:
-        raise SystemExit(
-            "No TAIGA_TOKEN configured.\n"
-            "Run: mcp-taiga login"
-        )
+    token = resolve_token(config)
+    config['TAIGA_TOKEN'] = token
     api = TaigaAPI(host=config['TAIGA_URL'])
     api.token = config['TAIGA_TOKEN']
     api.token_type = 'Bearer'
