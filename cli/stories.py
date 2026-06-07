@@ -2,8 +2,39 @@
 
 import os
 import click
-from .client import get_api, get_project, resolve_user, get_status_id, build_tags, parse_earnings, get_tag_labels
+from .client import get_api, get_project, get_memberships, resolve_user, get_status_id, build_tags, parse_earnings, get_tag_labels, parse_due_date
 from .formatters import table, as_json
+
+
+@click.command('users')
+@click.option('--json', 'use_json', is_flag=True)
+def users_cmd(use_json):
+    """List all Taiga users."""
+    api = get_api()
+    import requests
+    users = []
+    page = 1
+    while True:
+        resp = requests.get(
+            f'{api.host}/api/v1/users?page={page}',
+            headers={'Authorization': f'Bearer {api.token}'},
+        )
+        if not resp.ok:
+            break
+        batch = resp.json()
+        if not batch:
+            break
+        users.extend(batch)
+        if 'x-pagination-next' not in resp.headers or not resp.headers['x-pagination-next']:
+            break
+        page += 1
+
+    if use_json:
+        as_json([{'id': u['id'], 'username': u.get('username', ''), 'full_name': u.get('full_name', '')}
+                 for u in users])
+    else:
+        rows = [(u['id'], u.get('username', ''), u.get('full_name', '')) for u in users]
+        table(['ID', 'Username', 'Name'], rows)
 
 
 @click.command('projects')
@@ -26,11 +57,14 @@ def members_cmd(project, use_json):
     """List project members."""
     api = get_api()
     proj = get_project(api, project)
+    memberships = get_memberships(api, proj)
     if use_json:
-        as_json([{'id': m.id, 'username': m.username, 'full_name': m.full_name, 'role_name': m.role_name}
-                 for m in proj.members])
+        as_json([{'id': m.get('user'), 'username': m.get('username', ''),
+                  'full_name': m.get('full_name', ''), 'role_name': m.get('role_name', '')}
+                 for m in memberships])
     else:
-        rows = [(m.id, m.username, m.full_name, m.role_name) for m in proj.members]
+        rows = [(m.get('user', ''), m.get('username', ''), m.get('full_name', ''), m.get('role_name', ''))
+                for m in memberships]
         table(['ID', 'Username', 'Name', 'Role'], rows)
 
 
@@ -115,6 +149,8 @@ def show_cmd(project, ref):
 
     print(f"#{story.ref}  {story.subject}")
     print(f"Status: {status_name}  |  Assigned: {assignee}")
+    if getattr(story, 'due_date', None):
+        print(f"Due: {story.due_date}")
     if team_val or cash_val:
         parts = []
         if team_val:
@@ -144,7 +180,8 @@ def show_cmd(project, ref):
 @click.option('--cash', type=int, help='Cash amount (adds tag)')
 @click.option('--tag', '-t', multiple=True, help='Additional tags')
 @click.option('--status', '-s', help='Status name')
-def create_cmd(project, subject, description, assign, team, cash, tag, status):
+@click.option('--due', help='Due date (YYYY-MM-DD)')
+def create_cmd(project, subject, description, assign, team, cash, tag, status, due):
     """Create a user story."""
     api = get_api()
     proj = get_project(api, project)
@@ -164,10 +201,15 @@ def create_cmd(project, subject, description, assign, team, cash, tag, status):
     if status:
         kwargs['status'] = get_status_id(proj, status)
 
+    if due:
+        kwargs['due_date'] = parse_due_date(due)
+
     story = proj.add_user_story(**kwargs)
     print(f"Created #{story.ref}: {story.subject}")
     if tags:
         print(f"Tags: {', '.join(tags)}")
+    if due:
+        print(f"Due: {kwargs['due_date']}")
 
 
 @click.command('update')
@@ -180,7 +222,8 @@ def create_cmd(project, subject, description, assign, team, cash, tag, status):
 @click.option('--cash', type=int, help='Set cash amount')
 @click.option('--tag', '-t', multiple=True, help='Add tags')
 @click.option('--status', '-s', help='Set status')
-def update_cmd(project, ref, subject, description, assign, team, cash, tag, status):
+@click.option('--due', help='Set due date (YYYY-MM-DD)')
+def update_cmd(project, ref, subject, description, assign, team, cash, tag, status, due):
     """Update a user story."""
     api = get_api()
     proj = get_project(api, project)
@@ -194,6 +237,8 @@ def update_cmd(project, ref, subject, description, assign, team, cash, tag, stat
         story.assigned_to = resolve_user(proj, assign)
     if status:
         story.status = get_status_id(proj, status)
+    if due:
+        story.due_date = parse_due_date(due)
 
     if team is not None or cash is not None or tag:
         story.tags = build_tags(story.tags, team=team, cash=cash, extra_tags=list(tag))

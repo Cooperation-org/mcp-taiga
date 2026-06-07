@@ -4,6 +4,7 @@ import os
 import re
 from pathlib import Path
 from taiga import TaigaAPI
+from taiga.requestmaker import RequestMaker
 
 
 def load_config():
@@ -13,6 +14,7 @@ def load_config():
         'TAIGA_TOKEN': None,
         'TAG_TEAM': 'cook',
         'TAG_CASH': 'usd',
+        'DEFAULT_PROJECT': None,
     }
 
     # Read conf file
@@ -33,6 +35,18 @@ def load_config():
     return config
 
 
+def get_default_project():
+    """Return default project slug from config, or error."""
+    config = load_config()
+    proj = config.get('DEFAULT_PROJECT')
+    if not proj:
+        raise SystemExit(
+            "No project specified and no DEFAULT_PROJECT configured.\n"
+            "Set DEFAULT_PROJECT in ~/.mcp-taiga.conf or pass project as argument."
+        )
+    return proj
+
+
 def get_api():
     """Return authenticated TaigaAPI instance."""
     config = load_config()
@@ -43,6 +57,12 @@ def get_api():
         )
     api = TaigaAPI(host=config['TAIGA_URL'])
     api.token = config['TAIGA_TOKEN']
+    api.token_type = 'Bearer'
+    api.raw_request = RequestMaker(
+        '/api/v1', config['TAIGA_URL'], config['TAIGA_TOKEN'], 'Bearer',
+        api.tls_verify, proxies=api.proxies,
+    )
+    api._init_resources()
     return api
 
 
@@ -67,33 +87,60 @@ def get_project(api, slug):
     return _project_cache[slug]
 
 
-def resolve_user(project, name):
+def get_memberships(api, project):
+    """Fetch project memberships via REST API (works with Taiga 6+)."""
+    import requests
+    resp = requests.get(
+        f'{api.host}/api/v1/memberships?project={project.id}',
+        headers={'Authorization': f'Bearer {api.token}'},
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def resolve_user(project, name, api=None):
     """Resolve a username/name fragment to a member user ID."""
+    if api is None:
+        api = get_api()
     name_lower = name.lower()
-    for member in project.members:
-        if (name_lower == str(member.username).lower() or
-                name_lower in str(member.full_name).lower() or
-                name_lower == str(member.id)):
-            return member.id
+    memberships = get_memberships(api, project)
+    for m in memberships:
+        uid = m.get('user')
+        uname = (m.get('username') or '').lower()
+        fname = (m.get('full_name') or '').lower()
+        email = (m.get('email') or '').lower()
+        if (name_lower == uname or
+                name_lower in fname or
+                name_lower == email or
+                name_lower == str(uid)):
+            return uid
+    names = [m.get('full_name') or m.get('email') or str(m.get('user')) for m in memberships]
     raise SystemExit(
         f"Member '{name}' not found in project. "
-        f"Run: mcp-taiga members {project.slug}"
+        f"Members: {', '.join(names)}"
     )
 
 
 def get_status_id(project, status_name):
-    """Resolve a status name to its ID (case-insensitive, partial match)."""
+    """Resolve a user story status name to its ID (case-insensitive, partial match)."""
+    import requests
+    api = get_api()
+    resp = requests.get(
+        f'{api.host}/api/v1/userstory-statuses?project={project.id}',
+        headers={'Authorization': f'Bearer {api.token}'},
+    )
+    resp.raise_for_status()
+    statuses = resp.json()
     name_lower = status_name.lower()
-    statuses = project.us_statuses
     # Exact match first
     for s in statuses:
-        if s.name.lower() == name_lower or s.slug == name_lower:
-            return s.id
+        if s['name'].lower() == name_lower or s.get('slug', '').lower() == name_lower:
+            return s['id']
     # Partial match
     for s in statuses:
-        if name_lower in s.name.lower() or name_lower in s.slug:
-            return s.id
-    available = ', '.join(s.name for s in statuses)
+        if name_lower in s['name'].lower():
+            return s['id']
+    available = ', '.join(s['name'] for s in statuses)
     raise SystemExit(f"Status '{status_name}' not found. Available: {available}")
 
 
@@ -101,6 +148,21 @@ def get_tag_labels():
     """Return (team_label, cash_label) from config."""
     config = load_config()
     return config['TAG_TEAM'], config['TAG_CASH']
+
+
+def parse_due_date(value):
+    """Validate a due date string and return it in Taiga's YYYY-MM-DD format.
+
+    Accepts an ISO date (YYYY-MM-DD). Raises SystemExit with a clear message
+    on a malformed date so the CLI fails loudly instead of silently dropping it.
+    """
+    from datetime import datetime
+    try:
+        return datetime.strptime(value.strip(), '%Y-%m-%d').strftime('%Y-%m-%d')
+    except (ValueError, AttributeError):
+        raise SystemExit(
+            f"Invalid due date '{value}'. Use YYYY-MM-DD (e.g. 2026-06-14)."
+        )
 
 
 def build_tags(existing_tags, team=None, cash=None, extra_tags=None):

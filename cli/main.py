@@ -2,11 +2,12 @@
 
 import click
 from .stories import (
-    projects_cmd, members_cmd, list_cmd, show_cmd,
+    users_cmd, projects_cmd, members_cmd, list_cmd, show_cmd,
     create_cmd, update_cmd, move_cmd, comment_cmd, attach_cmd,
 )
 from .earnings import earnings_cmd
 from .auth import login_cmd
+from .tasks import task_group
 
 
 @click.group()
@@ -16,6 +17,7 @@ def cli():
     pass
 
 
+cli.add_command(users_cmd)
 cli.add_command(projects_cmd)
 cli.add_command(members_cmd)
 cli.add_command(list_cmd)
@@ -27,6 +29,7 @@ cli.add_command(comment_cmd)
 cli.add_command(attach_cmd)
 cli.add_command(earnings_cmd)
 cli.add_command(login_cmd)
+cli.add_command(task_group)
 
 
 if __name__ == '__main__':
