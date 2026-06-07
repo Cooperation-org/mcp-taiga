@@ -44,7 +44,16 @@ mcp-taiga move <project> 42 done
 mcp-taiga comment <project> 42 "Shipped in v2.1"
 mcp-taiga attach <project> 42 ./screenshot.png
 mcp-taiga attach <project> 42 https://example.com/spec.pdf
+mcp-taiga add-member <project> alice bob carol            # add users (Stakeholder by default)
+mcp-taiga add-member <project> alice --role Back          # pick a role
+mcp-taiga add-member <project> alice bob --dry-run        # preview without changes
 ```
+
+`add-member` accepts usernames, emails, or numeric user ids. It is idempotent
+(re-running reports existing members as "already a member") and verifies each
+add against the live membership list, so a failed invitation-email step on the
+Taiga server (which returns HTTP 500 even though the member was created) is
+reported correctly as added, not failed.
 
 All commands support `--json` for machine-readable output where applicable.
 

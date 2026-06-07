@@ -180,6 +180,108 @@ def get_memberships(api, project):
     return resp.json()
 
 
+def get_all_users(api):
+    """Fetch every Taiga user (paginated)."""
+    import requests
+    users = []
+    page = 1
+    while True:
+        resp = requests.get(
+            f'{api.host}/api/v1/users?page={page}',
+            headers={'Authorization': f'Bearer {api.token}'},
+        )
+        if not resp.ok:
+            break
+        batch = resp.json()
+        if not batch:
+            break
+        users.extend(batch)
+        if not resp.headers.get('x-pagination-next'):
+            break
+        page += 1
+    return users
+
+
+def get_roles(api, project):
+    """Fetch the roles defined on a project."""
+    import requests
+    resp = requests.get(
+        f'{api.host}/api/v1/roles?project={project.id}',
+        headers={'Authorization': f'Bearer {api.token}'},
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def resolve_role(api, project, role_name):
+    """Resolve a role name (case-insensitive, partial) to a role dict.
+
+    With no name, default to 'Stakeholder' if the project has it, else the
+    first role. Returns the full role dict so callers can show the name used.
+    """
+    roles = get_roles(api, project)
+    if not roles:
+        raise SystemExit(f"Project '{project.slug}' has no roles defined.")
+    if role_name:
+        nl = role_name.lower()
+        for r in roles:
+            if r['name'].lower() == nl:
+                return r
+        for r in roles:
+            if nl in r['name'].lower():
+                return r
+        avail = ', '.join(r['name'] for r in roles)
+        raise SystemExit(f"Role '{role_name}' not found. Available: {avail}")
+    for r in roles:
+        if r['name'].lower() == 'stakeholder':
+            return r
+    return roles[0]
+
+
+def resolve_taiga_user(api, ident, users=None):
+    """Resolve an identifier (username, email, full name, or numeric id) to a
+    full Taiga user dict. Raises SystemExit with candidates when the match is
+    ambiguous or absent."""
+    if users is None:
+        users = get_all_users(api)
+    il = str(ident).strip().lower()
+    # Exact username / email / id first
+    for u in users:
+        if (il == (u.get('username') or '').lower()
+                or il == (u.get('email') or '').lower()
+                or il == str(u.get('id'))):
+            return u
+    # Fall back to full-name / substring match
+    matches = [
+        u for u in users
+        if il in (u.get('full_name') or '').lower()
+        or il in (u.get('username') or '').lower()
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        raise SystemExit(f"No Taiga user matches '{ident}'.")
+    listed = ', '.join(f"{u['username']} ({u.get('full_name') or '?'})" for u in matches[:10])
+    raise SystemExit(
+        f"'{ident}' is ambiguous. Candidates: {listed}. "
+        f"Use an exact username."
+    )
+
+
+def add_membership(api, project, role_id, username):
+    """Create a project membership. Returns the requests.Response so the caller
+    can distinguish created (201), already-a-member, and other errors."""
+    import requests
+    return requests.post(
+        f'{api.host}/api/v1/memberships',
+        headers={
+            'Authorization': f'Bearer {api.token}',
+            'Content-Type': 'application/json',
+        },
+        json={'project': project.id, 'role': role_id, 'username': username},
+    )
+
+
 def resolve_user(project, name, api=None):
     """Resolve a username/name fragment to a member user ID."""
     if api is None:

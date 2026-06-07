@@ -2,7 +2,7 @@
 
 import os
 import click
-from .client import get_api, get_project, get_memberships, resolve_user, get_status_id, build_tags, parse_earnings, get_tag_labels, parse_due_date
+from .client import get_api, get_project, get_memberships, resolve_user, get_status_id, build_tags, parse_earnings, get_tag_labels, parse_due_date, get_all_users, resolve_role, resolve_taiga_user, add_membership
 from .formatters import table, as_json
 
 
@@ -66,6 +66,60 @@ def members_cmd(project, use_json):
         rows = [(m.get('user', ''), m.get('username', ''), m.get('full_name', ''), m.get('role_name', ''))
                 for m in memberships]
         table(['ID', 'Username', 'Name', 'Role'], rows)
+
+
+@click.command('add-member')
+@click.argument('project')
+@click.argument('users', nargs=-1, required=True)
+@click.option('--role', default=None,
+              help="Role to assign (default: Stakeholder, or first project role)")
+@click.option('--dry-run', is_flag=True, help='Show what would be added without changing anything')
+@click.option('--json', 'use_json', is_flag=True)
+def add_member_cmd(project, users, role, dry_run, use_json):
+    """Add one or more USERS (username, email, or id) to a PROJECT."""
+    api = get_api()
+    proj = get_project(api, project)
+    role_obj = resolve_role(api, proj, role)
+    all_users = get_all_users(api)
+    # Memberships report `user` (id) reliably; `username` is often null. Dedup
+    # and verify by id.
+    existing_ids = {m.get('user') for m in get_memberships(api, proj)}
+
+    # Resolve every identifier up front so a typo fails before any writes.
+    resolved = [(ident, resolve_taiga_user(api, ident, all_users)) for ident in users]
+
+    # Attempt each add, capturing any error text. We do NOT trust the HTTP
+    # status alone: Taiga creates the membership and THEN tries to email an
+    # invitation, so a failed mail backend returns 500 even though the member
+    # was added. Final truth comes from re-reading the membership list below.
+    attempted = {}  # user id -> error text (or None on a clean status)
+    results = []
+    for ident, user in resolved:
+        uname = user.get('username') or user.get('full_name') or str(user['id'])
+        if user['id'] in existing_ids:
+            results.append((ident, uname, 'already a member'))
+            continue
+        if dry_run:
+            results.append((ident, uname, f'would add as {role_obj["name"]}'))
+            continue
+        resp = add_membership(api, proj, role_obj['id'], user['username'])
+        attempted[user['id']] = None if resp.status_code in (200, 201) else f'{resp.status_code}: {resp.text[:120]}'
+
+    if attempted:
+        now_ids = {m.get('user') for m in get_memberships(api, proj)}
+        for ident, user in resolved:
+            if user['id'] not in attempted:
+                continue
+            uname = user.get('username') or user.get('full_name') or str(user['id'])
+            if user['id'] in now_ids:
+                results.append((ident, uname, f'added as {role_obj["name"]}'))
+            else:
+                results.append((ident, uname, f'FAILED ({attempted[user["id"]]})'))
+
+    if use_json:
+        as_json([{'input': i, 'username': u, 'result': r} for i, u, r in results])
+    else:
+        table(['Input', 'Username', 'Result'], results)
 
 
 def _tag_names(tags):
