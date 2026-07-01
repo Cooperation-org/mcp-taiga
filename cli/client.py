@@ -12,6 +12,7 @@ def load_config():
     config = {
         'TAIGA_URL': 'https://taiga.linkedtrust.us',
         'TAIGA_TOKEN': None,
+        'TAIGA_REFRESH': None,
         'TAIGA_USERNAME': None,
         'TAIGA_PASSWORD': None,
         'TAG_TEAM': 'cook',
@@ -69,8 +70,11 @@ def _jwt_expired(token, skew=60):
     return time.time() >= (exp - skew)
 
 
-def login_for_token(host, username, password):
-    """Authenticate username/password against Taiga and return an access token."""
+def login_for_tokens(host, username, password):
+    """Authenticate username/password against Taiga.
+
+    Returns (auth_token, refresh_token); refresh_token is None if the server
+    doesn't issue one."""
     import requests
     resp = requests.post(
         f'{host}/api/v1/auth',
@@ -82,49 +86,104 @@ def login_for_token(host, username, password):
             f"Taiga login failed for '{username}' ({resp.status_code}). "
             f"Check TAIGA_USERNAME/TAIGA_PASSWORD."
         )
-    return resp.json()['auth_token']
+    data = resp.json()
+    return data['auth_token'], data.get('refresh')
 
 
-def _cache_token(token):
-    """Persist a freshly-minted token back to ~/.mcp-taiga.conf when that file
-    exists, so subsequent invocations reuse it until it expires. Env-only
-    credential setups (no conf file) simply re-login each run."""
+def login_for_token(host, username, password):
+    """Back-compat wrapper: return only the access token."""
+    return login_for_tokens(host, username, password)[0]
+
+
+def refresh_access_token(host, refresh):
+    """Exchange a refresh token for a new (auth_token, refresh) pair without a
+    password. Returns (None, None) when the refresh token is missing, invalid,
+    or expired, so callers can fall back to a full login."""
+    if not refresh:
+        return None, None
+    import requests
+    try:
+        resp = requests.post(
+            f'{host}/api/v1/auth/refresh',
+            json={'refresh': refresh},
+            timeout=15,
+        )
+    except requests.RequestException:
+        return None, None
+    if not resp.ok:
+        return None, None
+    data = resp.json()
+    # Taiga rotates the refresh token on each use; keep the new one if present.
+    return data.get('auth_token'), data.get('refresh', refresh)
+
+
+def _cache_tokens(token, refresh=None):
+    """Persist freshly-minted tokens back to ~/.mcp-taiga.conf when that file
+    exists, so subsequent invocations reuse them. Env-only credential setups
+    (no conf file) simply re-authenticate each run. Best-effort: never blocks a
+    working token."""
     conf_path = Path.home() / '.mcp-taiga.conf'
     if not conf_path.exists():
         return
+    updates = {'TAIGA_TOKEN': token}
+    if refresh:
+        updates['TAIGA_REFRESH'] = refresh
     try:
         lines = conf_path.read_text().splitlines()
-        out, found = [], False
+        out, seen = [], set()
         for line in lines:
-            if line.strip().startswith('TAIGA_TOKEN='):
-                out.append(f'TAIGA_TOKEN={token}')
-                found = True
+            key = line.split('=', 1)[0].strip() if '=' in line else None
+            if key in updates:
+                out.append(f'{key}={updates[key]}')
+                seen.add(key)
             else:
                 out.append(line)
-        if not found:
-            out.append(f'TAIGA_TOKEN={token}')
+        for key, val in updates.items():
+            if key not in seen:
+                out.append(f'{key}={val}')
         conf_path.write_text('\n'.join(out) + '\n')
+        conf_path.chmod(0o600)
     except Exception:
         pass  # caching is best-effort; never block a working token
 
 
+def _cache_token(token):
+    """Back-compat wrapper for callers that only have an access token."""
+    _cache_tokens(token)
+
+
 def resolve_token(config):
-    """Return a usable Taiga token, refreshing via username/password when the
-    stored token is missing or expired. Keeps token-only setups working."""
+    """Return a usable Taiga token. Preference order:
+
+    1. The cached access token, if still valid.
+    2. A new access token minted from the cached refresh token (no password) —
+       this is what spares the user from re-logging in every day.
+    3. A fresh login from configured TAIGA_USERNAME/TAIGA_PASSWORD.
+    4. The (expired) cached token as a last resort, letting the API try anyway.
+    """
     token = config.get('TAIGA_TOKEN')
+    refresh = config.get('TAIGA_REFRESH')
     username = config.get('TAIGA_USERNAME')
     password = config.get('TAIGA_PASSWORD')
 
     if token and not _jwt_expired(token):
         return token
 
+    # Renew silently with the refresh token before asking for a password.
+    new_token, new_refresh = refresh_access_token(config['TAIGA_URL'], refresh)
+    if new_token:
+        _cache_tokens(new_token, new_refresh)
+        config['TAIGA_REFRESH'] = new_refresh
+        return new_token
+
     if username and password:
-        fresh = login_for_token(config['TAIGA_URL'], username, password)
-        _cache_token(fresh)
-        return fresh
+        new_token, new_refresh = login_for_tokens(
+            config['TAIGA_URL'], username, password)
+        _cache_tokens(new_token, new_refresh)
+        return new_token
 
     if token:
-        return token  # expired but no creds to refresh; let the API try anyway
+        return token  # expired but nothing to refresh with; let the API try anyway
 
     raise SystemExit(
         "No Taiga credentials configured.\n"
