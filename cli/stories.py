@@ -2,7 +2,7 @@
 
 import os
 import click
-from .client import get_api, get_project, get_memberships, resolve_user, get_status_id, build_tags, parse_earnings, get_tag_labels, parse_due_date, get_all_users, resolve_role, resolve_taiga_user, add_membership
+from .client import get_api, get_project, get_memberships, resolve_user, get_status_id, build_tags, parse_earnings, get_tag_labels, parse_due_date, get_all_users, resolve_role, resolve_taiga_user, add_membership, set_membership, admin_role, get_roles
 from .formatters import table, as_json
 
 
@@ -71,15 +71,28 @@ def members_cmd(project, use_json):
 @click.command('add-member')
 @click.argument('project')
 @click.argument('users', nargs=-1, required=True)
+@click.option('--admin/--stakeholder', 'as_admin', default=True,
+              help='Add as project admin (default) or as a view-only stakeholder. '
+                   'The inviting admin picks; onboard by trust, tighten later.')
 @click.option('--role', default=None,
-              help="Role to assign (default: Stakeholder, or first project role)")
+              help="Explicit role name to assign (overrides --admin/--stakeholder role choice)")
 @click.option('--dry-run', is_flag=True, help='Show what would be added without changing anything')
 @click.option('--json', 'use_json', is_flag=True)
-def add_member_cmd(project, users, role, dry_run, use_json):
-    """Add one or more USERS (username, email, or id) to a PROJECT."""
+def add_member_cmd(project, users, as_admin, role, dry_run, use_json):
+    """Add one or more USERS (username, email, or id) to a PROJECT.
+
+    By default new members are added as project ADMINS with a full-permission
+    role, so they can edit and assign tasks immediately. Pass --stakeholder for
+    view/comment-only access. The project owner (founder) is always an admin and
+    is never affected by this command."""
     api = get_api()
     proj = get_project(api, project)
-    role_obj = resolve_role(api, proj, role)
+    if role:
+        role_obj = resolve_role(api, proj, role)
+    elif as_admin:
+        role_obj = admin_role(api, proj) or resolve_role(api, proj, None)
+    else:
+        role_obj = resolve_role(api, proj, 'Stakeholder')
     all_users = get_all_users(api)
     # Memberships report `user` (id) reliably; `username` is often null. Dedup
     # and verify by id.
@@ -102,7 +115,7 @@ def add_member_cmd(project, users, role, dry_run, use_json):
         if dry_run:
             results.append((ident, uname, f'would add as {role_obj["name"]}'))
             continue
-        resp = add_membership(api, proj, role_obj['id'], user['username'])
+        resp = add_membership(api, proj, role_obj['id'], user['username'], is_admin=as_admin)
         attempted[user['id']] = None if resp.status_code in (200, 201) else f'{resp.status_code}: {resp.text[:120]}'
 
     if attempted:
@@ -120,6 +133,88 @@ def add_member_cmd(project, users, role, dry_run, use_json):
         as_json([{'input': i, 'username': u, 'result': r} for i, u, r in results])
     else:
         table(['Input', 'Username', 'Result'], results)
+
+
+@click.command('onboard')
+@click.argument('project', required=False)
+@click.option('--all', 'all_projects', is_flag=True,
+              help='Onboard every project you can administer (skips staff-blocked ones)')
+@click.option('--role', default=None, help='Full-permission role to grant (default: Product Owner)')
+@click.option('--dry-run', is_flag=True, help='Show what would change without writing')
+@click.option('--json', 'use_json', is_flag=True)
+def onboard_cmd(project, all_projects, role, dry_run, use_json):
+    """Make every member of a PROJECT a full admin so they can assign tasks.
+
+    This is the "works for everyone" onboarding primitive: it promotes each
+    existing member to is_admin with a full-permission role. It only promotes —
+    it never removes anyone and never demotes the founder/owner. Uses PATCH, so
+    it is unaffected by the invite-email 500. Idempotent; safe to re-run.
+
+    Pass a PROJECT (slug or id), or --all to sweep every administerable project.
+    To ADD new people, use `add-member` (admin by default, --stakeholder to opt
+    out)."""
+    api = get_api()
+    if not project and not all_projects:
+        raise SystemExit("Give a PROJECT or use --all.")
+
+    import requests
+    all_projs = requests.get(
+        f'{api.host}/api/v1/projects?member={_me_id(api)}&page_size=200',
+        headers={'Authorization': f'Bearer {api.token}'}).json()
+    if all_projects:
+        targets = [p for p in all_projs if not p.get('blocked_code')]
+        blocked = [p for p in all_projs if p.get('blocked_code')]
+        if blocked and not use_json:
+            click.echo(f"Skipping {len(blocked)} staff-blocked (read-only) project(s): "
+                       + ', '.join(p['slug'] for p in blocked))
+    else:
+        proj = get_project(api, project)
+        pd = next((p for p in all_projs if p['id'] == proj.id), {'id': proj.id, 'slug': proj.slug})
+        if pd.get('blocked_code'):
+            raise SystemExit(f"Project '{proj.slug}' is staff-blocked (read-only); cannot change members.")
+        targets = [pd]
+
+    results = []
+    for pd in targets:
+        class _P:  # lightweight project handle for helper calls
+            id = pd['id']; slug = pd['slug']
+        target_role = admin_role(api, _P, prefer=role)
+        if not target_role:
+            results.append((pd['slug'], '-', 'SKIP: no full-permission role on project'))
+            continue
+        roles_by_id = {r['id']: r for r in get_roles(api, _P)}
+        for m in get_memberships(api, _P):
+            if not m.get('user'):
+                continue
+            name = m.get('full_name') or m.get('user_email') or str(m['user'])
+            role_ok = 'modify_us' in roles_by_id.get(m['role'], {}).get('permissions', [])
+            if m.get('is_admin') and role_ok:
+                continue  # already fully enabled
+            fields = {'is_admin': True}
+            if not role_ok:
+                fields['role'] = target_role['id']
+            if dry_run:
+                results.append((pd['slug'], name, 'would promote to admin/' + target_role['name']))
+                continue
+            resp = set_membership(api, m['id'], **fields)
+            ok = resp.status_code in (200, 201)
+            results.append((pd['slug'], name,
+                            'promoted' if ok else f'FAILED {resp.status_code}: {resp.text[:80]}'))
+
+    if use_json:
+        as_json([{'project': p, 'member': n, 'result': r} for p, n, r in results])
+    else:
+        if not results:
+            click.echo("Everyone already admin. Nothing to do.")
+        else:
+            table(['Project', 'Member', 'Result'], results)
+
+
+def _me_id(api):
+    """Return the authenticated user's Taiga id."""
+    import requests
+    return requests.get(f'{api.host}/api/v1/users/me',
+                        headers={'Authorization': f'Bearer {api.token}'}).json()['id']
 
 
 def _tag_names(tags):

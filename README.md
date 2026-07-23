@@ -44,16 +44,35 @@ mcp-taiga move <project> 42 done
 mcp-taiga comment <project> 42 "Shipped in v2.1"
 mcp-taiga attach <project> 42 ./screenshot.png
 mcp-taiga attach <project> 42 https://example.com/spec.pdf
-mcp-taiga add-member <project> alice bob carol            # add users (Stakeholder by default)
-mcp-taiga add-member <project> alice --role Back          # pick a role
+mcp-taiga add-member <project> alice bob carol            # add users as ADMIN (default)
+mcp-taiga add-member <project> dave --stakeholder         # add as view/comment-only instead
+mcp-taiga add-member <project> alice --role Back          # pick an explicit role
 mcp-taiga add-member <project> alice bob --dry-run        # preview without changes
+
+mcp-taiga onboard <project>                               # make every member of a project an admin
+mcp-taiga onboard --all                                   # sweep every administerable project
+mcp-taiga onboard <project> --dry-run                     # preview promotions
 ```
+
+### Onboarding model
+
+The team onboards **by trust**: new members are added as project **admins** by
+default so they can edit and assign tasks immediately. The inviting admin can
+pass `--stakeholder` to add someone view/comment-only instead. The project
+owner (founder) is always an admin and no command demotes them.
 
 `add-member` accepts usernames, emails, or numeric user ids. It is idempotent
 (re-running reports existing members as "already a member") and verifies each
 add against the live membership list, so a failed invitation-email step on the
 Taiga server (which returns HTTP 500 even though the member was created) is
 reported correctly as added, not failed.
+
+`onboard` promotes every existing member of a project to a full-permission
+admin. It only ever promotes — it never removes anyone and never demotes the
+founder. It uses PATCH, so it is unaffected by the invite-email 500, and it is
+idempotent. Run it after a new team's project is created, or `--all` to bring a
+whole instance up to the "everyone can assign" baseline. Staff-blocked
+(read-only) projects are skipped and listed.
 
 All commands support `--json` for machine-readable output where applicable.
 

@@ -2,7 +2,7 @@
 
 import click
 from .stories import (
-    users_cmd, projects_cmd, members_cmd, add_member_cmd, list_cmd, show_cmd,
+    users_cmd, projects_cmd, members_cmd, add_member_cmd, onboard_cmd, list_cmd, show_cmd,
     create_cmd, update_cmd, move_cmd, comment_cmd, attach_cmd,
 )
 from .earnings import earnings_cmd
@@ -21,6 +21,7 @@ cli.add_command(users_cmd)
 cli.add_command(projects_cmd)
 cli.add_command(members_cmd)
 cli.add_command(add_member_cmd)
+cli.add_command(onboard_cmd)
 cli.add_command(list_cmd)
 cli.add_command(show_cmd)
 cli.add_command(create_cmd)

@@ -327,9 +327,13 @@ def resolve_taiga_user(api, ident, users=None):
     )
 
 
-def add_membership(api, project, role_id, username):
+def add_membership(api, project, role_id, username, is_admin=False):
     """Create a project membership. Returns the requests.Response so the caller
-    can distinguish created (201), already-a-member, and other errors."""
+    can distinguish created (201), already-a-member, and other errors.
+
+    NOTE: this Taiga sends an invitation email AFTER creating the row, and its
+    mail backend is unconfigured, so a successful create still returns 500. The
+    membership IS created; callers must verify by re-reading, not by status."""
     import requests
     return requests.post(
         f'{api.host}/api/v1/memberships',
@@ -337,8 +341,45 @@ def add_membership(api, project, role_id, username):
             'Authorization': f'Bearer {api.token}',
             'Content-Type': 'application/json',
         },
-        json={'project': project.id, 'role': role_id, 'username': username},
+        json={'project': project.id, 'role': role_id,
+              'username': username, 'is_admin': is_admin},
     )
+
+
+def set_membership(api, membership_id, **fields):
+    """PATCH an existing membership (e.g. is_admin=True, role=<id>). Returns the
+    requests.Response. Unlike create, PATCH does not trigger the invite email,
+    so its status is trustworthy."""
+    import requests
+    return requests.patch(
+        f'{api.host}/api/v1/memberships/{membership_id}',
+        headers={
+            'Authorization': f'Bearer {api.token}',
+            'Content-Type': 'application/json',
+        },
+        json=fields,
+    )
+
+
+def admin_role(api, project, prefer=None):
+    """Return a role dict on PROJECT that carries full edit permissions (can
+    modify user stories and tasks). Used as the default 'admin' role so an
+    onboarded member can actually change assignees. Prefers a role named
+    `prefer`, then 'Product Owner', then any full-permission role."""
+    roles = get_roles(api, project)
+    full = [r for r in roles
+            if 'modify_us' in r['permissions'] and 'modify_task' in r['permissions']]
+    if not full:
+        return None
+    if prefer:
+        pl = prefer.lower()
+        for r in full:
+            if r['name'].lower() == pl:
+                return r
+    for r in full:
+        if r['name'].lower() == 'product owner':
+            return r
+    return full[0]
 
 
 def resolve_user(project, name, api=None):
