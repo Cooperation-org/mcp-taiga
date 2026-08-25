@@ -3,7 +3,7 @@
 import click
 from .stories import (
     users_cmd, projects_cmd, members_cmd, add_member_cmd, onboard_cmd, list_cmd, show_cmd,
-    create_cmd, update_cmd, move_cmd, comment_cmd, attach_cmd,
+    create_cmd, update_cmd, move_cmd, comment_cmd, attach_cmd, statuses_cmd,
 )
 from .earnings import earnings_cmd
 from .auth import login_cmd
@@ -32,6 +32,7 @@ cli.add_command(attach_cmd)
 cli.add_command(earnings_cmd)
 cli.add_command(login_cmd)
 cli.add_command(task_group)
+cli.add_command(statuses_cmd)
 
 
 if __name__ == '__main__':

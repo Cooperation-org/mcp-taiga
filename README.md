@@ -31,6 +31,7 @@ mcp-taiga list <project> -s "in progress" # filter by status
 mcp-taiga list <project> -a golda         # filter by assignee
 mcp-taiga list <project> -t frontend      # filter by tag
 mcp-taiga show <project> 42               # show story #42
+mcp-taiga statuses <project>              # list user story statuses for a project (JSON with --json)
 mcp-taiga earnings <project>              # sum team/cash per user (done stories)
 mcp-taiga earnings <project> --all        # sum across all statuses
 ```

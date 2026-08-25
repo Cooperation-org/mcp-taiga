@@ -68,6 +68,27 @@ def members_cmd(project, use_json):
         table(['ID', 'Username', 'Name', 'Role'], rows)
 
 
+@click.command('statuses')
+@click.argument('project')
+@click.option('--json', 'use_json', is_flag=True, help='JSON output')
+def statuses_cmd(project, use_json):
+    """List user story statuses defined for a project."""
+    api = get_api()
+    proj = get_project(api, project)
+    import requests
+    resp = requests.get(
+        f'{api.host}/api/v1/userstory-statuses?project={proj.id}',
+        headers={'Authorization': f'Bearer {api.token}'},
+    )
+    resp.raise_for_status()
+    statuses = resp.json()
+    if use_json:
+        as_json([{'id': s['id'], 'name': s['name']} for s in statuses])
+    else:
+        rows = [(s['id'], s['name']) for s in statuses]
+        table(['ID', 'Name'], rows)
+
+
 @click.command('add-member')
 @click.argument('project')
 @click.argument('users', nargs=-1, required=True)
