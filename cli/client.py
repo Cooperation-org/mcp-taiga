@@ -228,15 +228,62 @@ def get_project(api, slug):
     return _project_cache[slug]
 
 
+def get_project_users(api, project):
+    """Fetch the user objects for everyone on a project.
+
+    /api/v1/memberships carries no `username` — only the user id, full_name
+    and email. /api/v1/users?project=<id> is the endpoint that carries it.
+    """
+    import requests
+    users = []
+    page = 1
+    while True:
+        resp = requests.get(
+            f'{api.host}/api/v1/users?project={project.id}&page={page}',
+            headers={'Authorization': f'Bearer {api.token}'},
+        )
+        if not resp.ok:
+            break
+        batch = resp.json()
+        if not batch:
+            break
+        users.extend(batch)
+        if not resp.headers.get('x-pagination-next'):
+            break
+        page += 1
+    return users
+
+
 def get_memberships(api, project):
-    """Fetch project memberships via REST API (works with Taiga 6+)."""
+    """Fetch project memberships via REST API (works with Taiga 6+).
+
+    Taiga's membership serializer has no `username` field, so every caller
+    that wanted one got an empty string. Join each membership to its user
+    object by id and fill `username` in.
+    """
     import requests
     resp = requests.get(
         f'{api.host}/api/v1/memberships?project={project.id}',
         headers={'Authorization': f'Bearer {api.token}'},
     )
     resp.raise_for_status()
-    return resp.json()
+    memberships = resp.json()
+
+    try:
+        usernames = {
+            u['id']: u.get('username', '')
+            for u in get_project_users(api, project)
+            if u.get('id') is not None
+        }
+    except Exception:
+        # A membership list without usernames is still useful (ids, names,
+        # roles); don't fail the whole command on the enrichment call.
+        return memberships
+
+    for m in memberships:
+        if not m.get('username'):
+            m['username'] = usernames.get(m.get('user'), '')
+    return memberships
 
 
 def get_all_users(api):
