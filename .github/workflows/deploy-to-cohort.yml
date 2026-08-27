@@ -1,0 +1,26 @@
+# Deploys this repo to the cohort VM on every push to main, by sshing in as the
+# restricted `deploy` user and running the one earnkit script it is allowed to
+# run. Nothing else on that box is reachable with this key: /etc/sudoers.d/
+# earnkit-deploy whitelists the update scripts by path and grants no shell.
+#
+# Repo secrets this needs (same values as the other cohort repos):
+#   COHORT_SSH_HOST, COHORT_SSH_PORT, COHORT_SSH_KEY
+name: Deploy to cohort VM
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via earnkit update script
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.COHORT_SSH_HOST }}
+          port: ${{ secrets.COHORT_SSH_PORT }}
+          username: deploy
+          key: ${{ secrets.COHORT_SSH_KEY }}
+          script: sudo /opt/earnkit/bin/update-mcp-taiga
